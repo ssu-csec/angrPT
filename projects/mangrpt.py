@@ -144,12 +144,14 @@ class angrPTObject():
                         #print(block_insn_op_str)
                         #print(block_insn_mnemonic)
                         # TODO: lea instruction 추가,
-                        #       mov r11, qword ptr [rip + 0x7074] 같이 2번째 parameter가 xref인 경우도 처리 필요.
                         if base_reg == 'rip':
                             if target_insn.mnemonic == 'cmp':
                                 xref.type = 1
-                            elif target_insn.mnemonic in ['mov', 'movabs', 'movaps', 'and', 'or'] and op_index == 0:
-                                xref.type = 2
+                            elif target_insn.mnemonic in ['mov', 'movabs', 'movaps', 'movzx',  'and', 'or', 'bt']:
+                                if op_index == 0:
+                                    xref.type = 2
+                                elif op_index == 1:
+                                    xref.type = 1
 
                         print(f"  - Operand {op_index}: Memory Access")
                         print(f"    - Base Register: {base_reg if base_reg else 'None'}")
