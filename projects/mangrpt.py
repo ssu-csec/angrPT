@@ -147,11 +147,10 @@ class angrPTObject():
                         if base_reg == 'rip':
                             if target_insn.mnemonic == 'cmp':
                                 xref.type = 1
-                            elif target_insn.mnemonic in ['mov', 'movabs', 'movaps', 'movzx',  'and', 'or', 'bt']:
-                                if op_index == 0:
-                                    xref.type = 2
-                                elif op_index == 1:
-                                    xref.type = 1
+                            elif target_insn.mnemonic in ['mov', 'movabs', 'movaps', 'movzx', 'and', 'or']:
+                                xref.type = 2 if op_index == 0 else 1
+                            elif target_insn.mnemonic == 'bt' and op_index == 0:
+                                xref.type = 1
 
                         print(f"  - Operand {op_index}: Memory Access")
                         print(f"    - Base Register: {base_reg if base_reg else 'None'}")
