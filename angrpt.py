@@ -152,8 +152,8 @@ if __name__ == '__main__':
             output_name = args.driver.split('/')[-1].split('.')[0]
         else:
             output_name = args.driver.split('.')[0]
-        # mkdir(f'result/{output_name}')
-        output_name = 'exovol'
+        mkdir(f'result/{output_name}')
+        # output_name = 'exovol'
         
         with open(f'result/{output_name}/{output_name}.json', "w") as json_file:
             print(f'[AngrPT] Write result json: result/{output_name}/{output_name}.json')

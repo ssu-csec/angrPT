@@ -132,7 +132,6 @@ class WDMDriverAnalysis(angr.Project):
             def skip_function_by_arguments(state):
                 # Get parameters of the current function.
                 parameters = []
-
                 skip = True
                 for arg_type in parameters:
                     if '+' not in arg_type:     # register
@@ -257,6 +256,8 @@ class WDMDriverAnalysis(angr.Project):
 
         state = self.project.factory.call_state(self.major_functions['DispatchDeviceControl'], ARG_DRIVEROBJECT, ARG_IRP)
         self.set_mode('symbolize_global_variables', state)
+        self.set_mode('force_skip_call', state)
+
         simgr = self.project.factory.simgr(state)
 
         io_stack_location = structures.IO_STACK_LOCATION(state, ARG_IOSTACKLOCATION)
@@ -271,59 +272,59 @@ class WDMDriverAnalysis(angr.Project):
         simgr.run(n=30)
 
         ioctl_interface = []
-
         switch_states = state_finder.get_states()
         
         for ioctl_code, case_state in switch_states.items():
-            def get_constraint_states(st):
-                self.set_mode('symbolize_global_variables', st)
+            def get_constraint_states(state):
+                self.set_mode('symbolize_global_variables', state)
+                self.set_mode('force_skip_call', state)
 
-                preconstraints = []
-                for constraint in st.history.jump_guards:
+                pre_constraints = []
+                for constraint in state.history.jump_guards:
                     if 'Buffer' in str(constraint):
-                        preconstraints.append(str(constraint))
+                        pre_constraints.append(str(constraint))
 
-                simgr = self.project.factory.simgr(st)
+                simgr = self.project.factory.simgr(state)
 
                 for _ in range(10):
                     simgr.step()
-                    for state in simgr.active:
-                        for constraint in state.history.jump_guards:
-                            if 'BufferLength' in str(constraint) and \
-                                str(constraint) not in preconstraints:
-                                yield state
+                    for simgr_state in simgr.active:
+                        for constraint in simgr_state.history.jump_guards:
+                            if 'BufferLength' in str(constraint) and str(constraint) not in pre_constraints:
+                                yield simgr_state
             constraint_states = get_constraint_states(case_state)
 
             print(f'[AngrPT] Starting analysis {hex(ioctl_code)}: raw address is {hex(case_state.addr)}.')
-            def is_there_constraint(st):
-                self.set_mode('symbolize_global_variables', st)
-                simgr = self.project.factory.simgr(st)
+
+            def is_there_constraint(state):
+                self.set_mode('symbolize_global_variables', state)
+                self.set_mode('force_skip_call', state)
+
+                simgr = self.project.factory.simgr(state)
                 for _ in range(10):
                     simgr.step()
 
-                    for state in simgr.active:
-                        for constraint in state.history.jump_guards:
+                    for simgr_state in simgr.active:
+                        for constraint in simgr_state.history.jump_guards:
                             if 'BufferLength' in str(constraint):
                                 return True
                 return False
 
-            # Inspect what constraints are used.
-            is_contraint = is_there_constraint(case_state)
-           # return
-            if is_contraint:
-                def gogogo(st):
-                    self.set_mode('symbolize_global_variables', st)
-                    simgr = self.project.factory.simgr(st)
-                    result = []
-                    global hihi
-                    hihi = False
+            if is_there_constraint(case_state):
+                def analyze_constraint(state):
+                    self.set_mode('symbolize_global_variables', state)
+                    self.set_mode('force_skip_call', state)
+                    simgr = self.project.factory.simgr(state)
+
+                    global visited
+                    visited = False
 
                     def sat_state_bp(state):
                         ntstatus_value = state.solver.eval(state.inspect.mem_write_expr)
                         
                         if ntstatus_value <= 0xBFFFFFFF: 
-                            global hihi
-                            hihi = True
+                            global visited
+                            visited = True
                             x= {'IoControlCode': hex(ioctl_code), 
                                 'InBufferLength': list(speculate_bvs_range(state, 
                                                             io_stack_location.fields['InputBufferLength'])),
@@ -332,7 +333,7 @@ class WDMDriverAnalysis(angr.Project):
                                 )}
                             ioctl_interface.append(x)
 
-                    st.inspect.b('mem_write', when=angr.BP_AFTER, 
+                    state.inspect.b('mem_write', when=angr.BP_AFTER,
                         mem_write_address = ARG_IRP + 0x30,action = sat_state_bp)
           
                     for _ in range(20):
@@ -340,21 +341,21 @@ class WDMDriverAnalysis(angr.Project):
                             simgr.step()
 
                     founded = False
-                    if hihi:
+                    if visited:
                         founded=True
                     else:    
-                        for state in simgr.active:
-                            symbolic_expr = state.mem[0xdead3030].int.resolved
-                            concrete_value = state.solver.eval(symbolic_expr)
+                        for simgr_state in simgr.active:
+                            symbolic_expr = simgr_state.mem[0xdead3030].int.resolved
+                            concrete_value = simgr_state.solver.eval(symbolic_expr)
 
                         #   print("Io status is ",hex(concrete_value), state)
 
                             if concrete_value <0xBFFFFFFF:
                                 founded = True
                                 x= {'IoControlCode': hex(ioctl_code), 
-                                    'InBufferLength': list(speculate_bvs_range(state, 
+                                    'InBufferLength': list(speculate_bvs_range(simgr_state,
                                                                 io_stack_location.fields['InputBufferLength'])),
-                                    'OutBufferLength': list(speculate_bvs_range(state,
+                                    'OutBufferLength': list(speculate_bvs_range(simgr_state,
                                                                 io_stack_location.fields['OutputBufferLength'])
                                     )}
                                 ioctl_interface.append(x)
@@ -362,18 +363,16 @@ class WDMDriverAnalysis(angr.Project):
                                 break
 
                     if not founded:
-                        for state in simgr.deadended:
+                        for simgr_state in simgr.deadended:
                             symbolic_expr = state.mem[0xdead3030].int.resolved
                             concrete_value = state.solver.eval(symbolic_expr)
-
                             #print("Io status is ",hex(concrete_value), state)
-
                             if concrete_value <0xBFFFFFFF:
                                 founded = True
                                 x= {'IoControlCode': hex(ioctl_code), 
-                                    'InBufferLength': list(speculate_bvs_range(state, 
+                                    'InBufferLength': list(speculate_bvs_range(simgr_state,
                                                                 io_stack_location.fields['InputBufferLength'])),
-                                    'OutBufferLength': list(speculate_bvs_range(state,
+                                    'OutBufferLength': list(speculate_bvs_range(simgr_state,
                                                                 io_stack_location.fields['OutputBufferLength'])
                                     )}
                                 ioctl_interface.append(x)
@@ -426,8 +425,7 @@ class WDMDriverAnalysis(angr.Project):
                                                                     io_stack_location.fields['OutputBufferLength'])
                                         )})
 
-                gogogo(case_state)
-                
+                analyze_constraint(case_state)
 
             else:
                # print("no constraint")
